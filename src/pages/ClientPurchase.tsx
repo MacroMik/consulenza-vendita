@@ -1,7 +1,7 @@
 import { useState, useEffect } from 'react';
 import { loadStripe } from '@stripe/stripe-js';
 import { useParams } from 'react-router-dom';
-import { supabase } from './src/lib/supabase'; // Assicurati che il percorso sia corretto
+import { supabase } from '../lib/supabase';
 import { CheckCircle, ShoppingCart, User, CreditCard, Calendar } from 'lucide-react';
 
 interface Service {
@@ -45,8 +45,6 @@ const AVAILABLE_SERVICES: Service[] = [
 ];
 
 type Step = 'service' | 'info' | 'payment' | 'appointment' | 'success';
-
-const FRONTEND_URL = import.meta.env.VITE_FRONTEND_URL || 'http://localhost:5173'; // Aggiunto FRONTEND_URL
 
 export default function ClientPurchase() {
   const { linkId } = useParams<{ linkId: string }>();
@@ -100,42 +98,44 @@ export default function ClientPurchase() {
     setError('');
 
     try {
-      if (!serialData || !selectedService) {
-        setError('Dati seriale o servizio non selezionati.');
-        setLoading(false);
-        return;
+      // 1. Crea o recupera il client nel DB (come prima)
+      const { data: clientData, error: clientError } = await supabase
+        .from('clients')
+        .insert({
+          serial_id: serialData.id,
+          vendor_id: serialData.vendor_id,
+          name: clientInfo.name,
+          email: clientInfo.email,
+          phone: clientInfo.phone,
+        })
+        .select()
+        .single();
+      if (clientError) throw clientError;
+
+      // 2. Chiedi all'Edge Function di creare la sessione
+      const res = await fetch('/functions/v1/create-checkout-session', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          price: selectedService!.price,
+          description: selectedService!.name,
+        }),
+      });
+      if (!res.ok) {
+        const text = await res.text();
+        throw new Error(text || 'Errore creazione sessione');
       }
+      const { id, error } = await res.json();
+      if (error) throw new Error(error);
 
-      // Chiama la funzione Edge per creare la sessione di checkout
-      const { data, error: invokeError } = await supabase.functions.invoke(
-        'create-checkout-session',
-        {
-          body: JSON.stringify({
-            serial_id: serialData.id,
-            vendor_id: serialData.vendor_id,
-            name: clientInfo.name,
-            email: clientInfo.email,
-            phone: clientInfo.phone,
-            price_id: selectedService.id, // Usiamo l'ID del servizio come price_id
-            success_url: `${FRONTEND_URL}/success`,
-            cancel_url: `${FRONTEND_URL}/cancel`,
-          }),
-        }
-      );
+      // 3. Redirect a Stripe Checkout
+      const stripe = await loadStripe(import.meta.env.VITE_STRIPE_PUBLISHABLE_KEY!);
+      const { error: stripeErr } = await stripe!.redirectToCheckout({ sessionId: id });
+      if (stripeErr) throw new Error(stripeErr.message);
 
-      if (invokeError) throw invokeError;
-
-      const { checkout_url } = data as { checkout_url: string };
-
-      if (checkout_url) {
-        window.location.href = checkout_url;
-      } else {
-        setError('URL di checkout non ricevuto.');
-      }
+      // Il resto (registrare purchase / serial) sarà gestito dal webhook dopo successo
     } catch (err: any) {
-      console.error('Errore nel processo di pagamento:', err);
-      setError(err.message || 'Si è verificato un errore durante il pagamento.');
-    } finally {
+      setError(err.message || 'Errore durante il pagamento');
       setLoading(false);
     }
   };
