@@ -113,14 +113,20 @@ export default function ClientPurchase() {
       if (clientError) throw clientError;
 
       // 2. Chiedi all'Edge Function di creare la sessione
-      const { data, error: invokeError } = await supabase.functions.invoke('create-checkout-session', {
-        body: {
+      const res = await fetch('/functions/v1/create-checkout-session', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
           price: selectedService!.price,
           description: selectedService!.name,
-        },
+        }),
       });
-      if (invokeError) throw invokeError;
-      const { id } = data;
+      if (!res.ok) {
+        const text = await res.text();
+        throw new Error(text || 'Errore creazione sessione');
+      }
+      const { id, error } = await res.json();
+      if (error) throw new Error(error);
 
       // 3. Redirect a Stripe Checkout
       const stripe = await loadStripe(import.meta.env.VITE_STRIPE_PUBLISHABLE_KEY!);
