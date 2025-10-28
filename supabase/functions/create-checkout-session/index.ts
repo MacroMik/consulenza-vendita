@@ -1,40 +1,56 @@
-// @ts-ignore – esm.sh module resolution
-import Stripe from 'https://esm.sh/stripe@12.12.0?target=deno&deno-std=0.177.0'
-
 export default async (req: Request) => {
-  const stripe = new Stripe(Deno.env.get('STRIPE_SECRET_KEY')!,
-    {
-      apiVersion: '2023-10-16',
-    })
-
   try {
-    const { price, description } = await req.json()
+    const requestBodyText = await req.text();
+    let price, description;
+    try {
+      const jsonBody = JSON.parse(requestBodyText);
+      price = jsonBody.price;
+      description = jsonBody.description;
+    } catch (jsonErr) {
+      console.error('JSON parsing error:', jsonErr);
+      console.error('Raw request body:', requestBodyText);
+      throw new Error('Invalid JSON in request body');
+    }
 
-    const session = await stripe.checkout.sessions.create({
-      payment_method_types: ['card'],
-      mode: 'payment',
-      success_url: `${req.headers.get('origin')}/success`,
-      cancel_url: `${req.headers.get('origin')}/cancel`,
-      line_items: [
-        {
-          price_data: {
-            currency: 'eur',
-            unit_amount: Math.round(price * 100), // da euro a cent
-            product_data: { name: description },
-          },
-          quantity: 1,
-        },
-      ],
-    })
+    const stripeSecretKey = Deno.env.get('STRIPE_SECRET_KEY');
+    if (!stripeSecretKey) {
+      throw new Error('Stripe secret key not found');
+    }
 
-    return new Response(JSON.stringify({ id: session.id }), {
+    const stripeApiUrl = 'https://api.stripe.com/v1/checkout/sessions';
+    const response = await fetch(stripeApiUrl, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/x-www-form-urlencoded',
+        'Authorization': `Bearer ${stripeSecretKey}`,
+      },
+      body: new URLSearchParams({
+        'payment_method_types[0]': 'card',
+        'mode': 'payment',
+        'success_url': `${req.headers.get('origin')}/success`,
+        'cancel_url': `${req.headers.get('origin')}/cancel`,
+        'line_items[0][price_data][currency]': 'eur',
+        'line_items[0][price_data][unit_amount]': Math.round(price * 100).toString(),
+        'line_items[0][price_data][product_data][name]': description,
+        'line_items[0][quantity]': '1',
+      }).toString(),
+    });
+
+    const sessionData = await response.json();
+
+    if (!response.ok) {
+      console.error('Stripe API error:', sessionData);
+      throw new Error(sessionData.error?.message || 'Stripe API error');
+    }
+
+    return new Response(JSON.stringify({ id: sessionData.id }), {
       headers: { 'Content-Type': 'application/json' },
-    })
+    });
   } catch (err) {
-    console.error(err)
+    console.error(err);
     return new Response(
       JSON.stringify({ error: 'Errore creazione sessione' }),
       { status: 400, headers: { 'Content-Type': 'application/json' } },
-    )
+    );
   }
 }
