@@ -98,13 +98,15 @@ export default function ClientPurchase() {
     setError('');
 
     try {
+      const supabaseFunctionsUrl = import.meta.env.VITE_SUPABASE_URL + '/functions/v1';
+
       // 1. Chiama l'Edge Function per creare il client
-      const clientRes = await fetch('/functions/v1/create-client', {
+      const clientRes = await fetch(`${supabaseFunctionsUrl}/create-client`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           serial_id: serialData.id,
-          vendor_id: serialData.vendor_id,
+          vendor_id: serialData.id,
           name: clientInfo.name,
           email: clientInfo.email,
           phone: clientInfo.phone,
@@ -118,7 +120,7 @@ export default function ClientPurchase() {
       const clientData = await clientRes.json();
 
       // 2. Chiedi all'Edge Function di creare la sessione
-      const res = await fetch('/functions/v1/create-checkout-session', {
+      const res = await fetch(`${supabaseFunctionsUrl}/create-checkout-session`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
