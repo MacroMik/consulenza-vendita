@@ -98,19 +98,24 @@ export default function ClientPurchase() {
     setError('');
 
     try {
-      // 1. Crea o recupera il client nel DB (come prima)
-      const { data: clientData, error: clientError } = await supabase
-        .from('clients')
-        .insert({
+      // 1. Chiama l'Edge Function per creare il client
+      const clientRes = await fetch('/functions/v1/create-client', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
           serial_id: serialData.id,
           vendor_id: serialData.vendor_id,
           name: clientInfo.name,
           email: clientInfo.email,
           phone: clientInfo.phone,
-        })
-        .select()
-        .single();
-      if (clientError) throw clientError;
+        }),
+      });
+
+      if (!clientRes.ok) {
+        const errorText = await clientRes.text();
+        throw new Error(errorText || 'Errore durante la creazione del client tramite Edge Function');
+      }
+      const clientData = await clientRes.json();
 
       // 2. Chiedi all'Edge Function di creare la sessione
       const res = await fetch('/functions/v1/create-checkout-session', {
